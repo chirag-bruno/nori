@@ -1,8 +1,78 @@
 # nori
 
+![nori logo](assets/nori_text_sushi.png)
+
 > Wrap your tools with elegance
 
 **nori** is a deterministic, cross-platform package manager that wraps your development tools in a simple, consistent interface—just like nori (seaweed) wraps sushi to make it easier to handle.
+
+> **Note**: Currently, nori supports **Neovim** only. More packages will be added to the registry soon.
+
+## Installation
+
+### Building from Source
+
+**Prerequisites:**
+- Go 1.25.3 or later
+
+**Build steps:**
+
+```bash
+# Clone the repository
+git clone https://github.com/chirag-bruno/nori.git
+cd nori
+
+# Build the binary
+go build -o nori ./cmd/nori
+
+# (Optional) Install to a directory in your PATH
+# For example, on macOS/Linux:
+sudo mv nori /usr/local/bin/
+
+# Or on macOS with Homebrew prefix:
+mv nori /opt/homebrew/bin/
+```
+
+### Initial Setup
+
+After installing nori, you need to initialize it to add the shims directory to your PATH:
+
+```bash
+# Initialize nori (adds ~/.nori/shims to PATH)
+nori init
+
+# Reload your shell configuration
+source ~/.zshrc  # for zsh
+# or
+source ~/.bashrc # for bash
+```
+
+This will:
+- Create the `~/.nori` directory structure
+- Add `~/.nori/shims` to your PATH in your shell profile
+- Set up the environment for managing packages
+
+### Quick Start
+
+```bash
+# Update the registry to get the latest package information
+nori update
+
+# Search for packages
+nori search neovim
+
+# Get information about a package
+nori info neovim
+
+# Install a package
+nori install neovim@0.9.5
+
+# Set a version as active
+nori use neovim@0.9.5
+
+# List installed packages
+nori list
+```
 
 ## Philosophy
 
