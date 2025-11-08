@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -232,21 +233,43 @@ func InstallCommand(ctx context.Context, c *urfavecli.Command) error {
 
 	fmt.Printf("Installing %s@%s for %s...\n", pkgName, version, platformStr)
 
-	// Fetch
+	// Fetch with progress
 	fetcher := fetch.New()
-	fmt.Println("Downloading...")
-	data, err := fetcher.Fetch(ctx, asset.URL, asset.Checksum)
+	
+	// Get content length for progress bar
+	var totalSize int64
+	req, _ := http.NewRequestWithContext(ctx, "HEAD", asset.URL, nil)
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		totalSize = resp.ContentLength
+		resp.Body.Close()
+	}
+	
+	downloadBar := NewProgressBar(totalSize, "Downloading")
+	data, err := fetcher.FetchWithProgress(ctx, asset.URL, asset.Checksum, downloadBar)
 	if err != nil {
+		downloadBar.Finish()
+		fmt.Fprintf(os.Stderr, "\nError: download failed: %v\n", err)
 		return fmt.Errorf("download failed: %w", err)
 	}
+	downloadBar.Finish()
 
-	// Extract
+	// Extract with progress
 	extractor := extract.New()
-	fmt.Println("Extracting...")
-	extractDir, err := extractor.Extract(data, asset.Type, asset.Checksum)
+	
+	// File count progress (unknown total, will show count)
+	extractBar := NewFileProgressBar(0, "Extracting")
+	fileCount := 0
+	
+	extractDir, err := extractor.ExtractWithProgress(data, asset.Type, asset.Checksum, func() {
+		fileCount++
+		extractBar.SetCurrent(fileCount)
+	})
 	if err != nil {
+		extractBar.Finish()
+		fmt.Fprintf(os.Stderr, "\nError: extraction failed: %v\n", err)
 		return fmt.Errorf("extraction failed: %w", err)
 	}
+	extractBar.Finish()
 	defer os.RemoveAll(extractDir)
 
 	// Install
@@ -254,6 +277,7 @@ func InstallCommand(ctx context.Context, c *urfavecli.Command) error {
 	fmt.Println("Installing...")
 	installPath, err := installer.Install(ctx, m, version, p, extractDir)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: installation failed: %v\n", err)
 		return fmt.Errorf("installation failed: %w", err)
 	}
 
@@ -261,6 +285,7 @@ func InstallCommand(ctx context.Context, c *urfavecli.Command) error {
 	shimsDir := platform.ShimsDir()
 	shim := shims.New(shimsDir)
 	if err := shim.UpdateShims(pkgName, version, m.Bins, installPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to create shims: %v\n", err)
 		return fmt.Errorf("failed to create shims: %w", err)
 	}
 
@@ -282,8 +307,21 @@ func UseCommand(ctx context.Context, c *urfavecli.Command) error {
 
 	pkgName, version := parts[0], parts[1]
 
-	// Verify installation exists
+	// Load manifest and validate version exists
+	reg := registry.NewFromEnv()
+	m, err := reg.LoadPackage(ctx, pkgName)
+	if err != nil {
+		return fmt.Errorf("failed to load package: %w", err)
+	}
+
+	// Detect platform and validate version/platform
 	p := platform.Detect()
+	platformStr := p.String()
+	if err := manifest.ValidateVersion(m, version, platformStr); err != nil {
+		return fmt.Errorf("version %q does not exist for package %q on platform %q", version, pkgName, platformStr)
+	}
+
+	// Verify installation exists
 	installPath := platform.InstallPath(pkgName, version, p.String())
 	if _, err := os.Stat(installPath); os.IsNotExist(err) {
 		return fmt.Errorf("package %s@%s is not installed", pkgName, version)
@@ -294,11 +332,7 @@ func UseCommand(ctx context.Context, c *urfavecli.Command) error {
 		return fmt.Errorf("failed to set active version: %w", err)
 	}
 
-	// Update shims
-	m, err := manifest.LoadFromFile(platform.PackageManifestPath(pkgName))
-	if err != nil {
-		return fmt.Errorf("failed to load manifest: %w", err)
-	}
+	// Update shims (use manifest we already loaded)
 
 	shimsDir := platform.ShimsDir()
 	shim := shims.New(shimsDir)

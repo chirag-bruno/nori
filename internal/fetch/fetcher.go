@@ -14,7 +14,8 @@ import (
 const (
 	maxRetries = 3
 	retryDelay = time.Second
-	timeout    = 30 * time.Second
+	// No timeout - allow large binaries to download
+	// Context cancellation still works for user-initiated cancellation
 )
 
 // Fetcher handles HTTP downloads with retries and checksum verification
@@ -26,13 +27,20 @@ type Fetcher struct {
 func New() *Fetcher {
 	return &Fetcher{
 		client: &http.Client{
-			Timeout: timeout,
+			// No timeout - allow large binaries to download
+			// Context cancellation still works for user-initiated cancellation
 		},
 	}
 }
 
 // Fetch downloads data from a URL and verifies its checksum
 func (f *Fetcher) Fetch(ctx context.Context, url, expectedChecksum string) ([]byte, error) {
+	return f.FetchWithProgress(ctx, url, expectedChecksum, nil)
+}
+
+// FetchWithProgress downloads data from a URL with progress tracking
+// progressWriter can be nil to disable progress tracking
+func (f *Fetcher) FetchWithProgress(ctx context.Context, url, expectedChecksum string, progressWriter io.Writer) ([]byte, error) {
 	var lastErr error
 	
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -45,7 +53,7 @@ func (f *Fetcher) Fetch(ctx context.Context, url, expectedChecksum string) ([]by
 			}
 		}
 		
-		data, err := f.fetchOnce(ctx, url)
+		data, err := f.fetchOnce(ctx, url, progressWriter)
 		if err != nil {
 			lastErr = err
 			// Retry on network errors or 5xx errors
@@ -67,7 +75,7 @@ func (f *Fetcher) Fetch(ctx context.Context, url, expectedChecksum string) ([]by
 }
 
 // fetchOnce performs a single HTTP GET request
-func (f *Fetcher) fetchOnce(ctx context.Context, url string) ([]byte, error) {
+func (f *Fetcher) fetchOnce(ctx context.Context, url string, progressWriter io.Writer) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -83,7 +91,13 @@ func (f *Fetcher) fetchOnce(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
 	
-	data, err := io.ReadAll(resp.Body)
+	// Read with progress tracking if progressWriter is provided
+	var reader io.Reader = resp.Body
+	if progressWriter != nil {
+		reader = io.TeeReader(resp.Body, progressWriter)
+	}
+	
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}

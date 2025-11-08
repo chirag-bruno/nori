@@ -14,6 +14,9 @@ import (
 	"github.com/chirag-bruno/nori/internal/fetch"
 )
 
+// ProgressCallback is called for each file extracted (for progress tracking)
+type ProgressCallback func()
+
 // Extractor handles safe extraction of archives
 type Extractor struct {
 	fetcher *fetch.Fetcher
@@ -30,6 +33,12 @@ func New() *Extractor {
 // assetType can be "tar" or "zip"
 // For tar files, it auto-detects .tar, .tar.gz, .tgz, .tar.xz
 func (e *Extractor) Extract(data []byte, assetType string, checksum string) (string, error) {
+	return e.ExtractWithProgress(data, assetType, checksum, nil)
+}
+
+// ExtractWithProgress extracts an archive with progress tracking
+// progressCallback can be nil to disable progress tracking
+func (e *Extractor) ExtractWithProgress(data []byte, assetType string, checksum string, progressCallback ProgressCallback) (string, error) {
 	// Verify checksum first
 	if err := fetch.VerifyChecksum(data, checksum); err != nil {
 		return "", fmt.Errorf("checksum verification failed: %w", err)
@@ -44,12 +53,12 @@ func (e *Extractor) Extract(data []byte, assetType string, checksum string) (str
 	// Extract based on type
 	switch assetType {
 	case "tar":
-		if err := e.extractTar(data, tmpDir); err != nil {
+		if err := e.extractTar(data, tmpDir, progressCallback); err != nil {
 			os.RemoveAll(tmpDir)
 			return "", fmt.Errorf("failed to extract tar: %w", err)
 		}
 	case "zip":
-		if err := e.extractZip(data, tmpDir); err != nil {
+		if err := e.extractZip(data, tmpDir, progressCallback); err != nil {
 			os.RemoveAll(tmpDir)
 			return "", fmt.Errorf("failed to extract zip: %w", err)
 		}
@@ -61,8 +70,8 @@ func (e *Extractor) Extract(data []byte, assetType string, checksum string) (str
 	return tmpDir, nil
 }
 
-// extractTar extracts a tar archive (handles .tar, .tar.gz, .tgz)
-func (e *Extractor) extractTar(data []byte, destDir string) error {
+// extractTar extracts a tar archive (handles .tar, .tar.gz, .tgz, .tar.xz)
+func (e *Extractor) extractTar(data []byte, destDir string, progressCallback ProgressCallback) error {
 	var reader io.Reader = bytes.NewReader(data)
 	
 	// Try to detect compression
@@ -118,13 +127,18 @@ func (e *Extractor) extractTar(data []byte, destDir string) error {
 			return fmt.Errorf("failed to write file: %w", err)
 		}
 		f.Close()
+		
+		// Update progress
+		if progressCallback != nil {
+			progressCallback()
+		}
 	}
 	
 	return nil
 }
 
 // extractZip extracts a zip archive
-func (e *Extractor) extractZip(data []byte, destDir string) error {
+func (e *Extractor) extractZip(data []byte, destDir string, progressCallback ProgressCallback) error {
 	zipReader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return fmt.Errorf("failed to create zip reader: %w", err)
@@ -170,6 +184,11 @@ func (e *Extractor) extractZip(data []byte, destDir string) error {
 		
 		f.Close()
 		rc.Close()
+		
+		// Update progress
+		if progressCallback != nil {
+			progressCallback()
+		}
 	}
 	
 	return nil
